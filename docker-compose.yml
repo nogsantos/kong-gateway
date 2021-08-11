@@ -1,0 +1,90 @@
+version: '3.7'
+
+volumes:
+  my_network_gateway_data: {}
+
+networks:
+  my-network:
+    external: true # External as true, before the up command, the network must be created manually: docker network create my-network
+
+services:
+  db:
+    image: postgres
+    container_name: db
+    env_file: ./.env
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+    stdin_open: true
+    tty: true
+    networks:
+      - my-network
+
+  kong-prepare:
+    image: "kong:2.3.2-alpine"
+    container_name: kong-prepare
+    command: |
+      kong migrations bootstrap && \
+      kong migrations up && \
+      kong migrations finish
+    depends_on:
+      - db
+    env_file: ./.env
+    networks:
+      - my-network
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  kong:
+    image: "kong:2.3.2-alpine"
+    container_name: kong
+    user: "kong"
+    depends_on:
+      - db
+    env_file: ./.env
+    networks:
+      - my-network
+    ports:
+      - "8000:8000/tcp"
+      - "127.0.0.1:8001:8001/tcp"
+      - "8443:8443/tcp"
+      - "127.0.0.1:8444:8444/tcp"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  konga-prepare:
+    container_name: konga-prepare
+    image: pantsel/konga:latest
+    command: "-c prepare -a postgres -u postgresql://kong:kong@db:5432/konga_db"
+    networks:
+      - my-network
+    restart: on-failure
+    depends_on:
+      - db
+
+  konga:
+    container_name: konga
+    image: pantsel/konga:latest
+    restart: always
+    networks:
+      - my-network
+    env_file: ./.env
+    depends_on:
+      - db
+    ports:
+      - "1337:1337"
